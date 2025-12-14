@@ -106,6 +106,21 @@ dmypy.json
 
 # Pyre type checker
 .pyre/
+
+# Cache for cluster backend & assets
 cluster_cache/
 assets/
 exp_results/
+*.DS_Store
+*.pkl
+*.cache
+
+# training outputs
+*.txt
+*.jpg
+*.png
+*.jpeg
+
+# models
+*.pt
+*.pth

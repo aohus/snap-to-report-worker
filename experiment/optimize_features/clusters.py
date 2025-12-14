@@ -1,257 +1,191 @@
-import base64
-import io
 import logging
-from concurrent.futures import ThreadPoolExecutor  # I/O 바운드 작업에 적합
-from typing import Dict, List, Optional
+import math
+from typing import List, Optional
 
 import numpy as np
-
-# GCP Libraries
-from google.cloud import aiplatform
-from google.protobuf import struct_pb2
-from PIL import Image, ImageFile
 from pyproj import Geod
+from sklearn.cluster import KMeans
 
-from app.domain.clusterers.base import Clusterer
-from app.models.photometa import PhotoMeta
-
-# 사용자 정의 모듈
-from experiment.optimize_features.clusters import _extract_vertex_feature
-
+# Try to import HDBSCAN
 try:
     from sklearn.cluster import HDBSCAN
 except ImportError:
     import hdbscan as HDBSCAN
 
+# App imports (가정)
+from app.common.models import PhotoMeta
+
 logger = logging.getLogger(__name__)
-ImageFile.LOAD_TRUNCATED_IMAGES = True
 
-
-
-class HybridCluster(Clusterer):
-    def __init__(self):
-        self.geod = Geod(ellps="WGS84")
-        self.max_gps_tolerance_m = 50.0 
-        
-        # Vertex AI 임베딩 기준 임계값 (Cosine Distance)
-        # 0.0 (동일) ~ 1.0 (다름) ~ 2.0 (정반대)
-        # Vertex AI는 의미론적 유사도가 매우 정확하므로 임계값을 타이트하게 잡아도 됨
-        self.similarity_strict_thresh = 0.15  # 거의 같은 장소 (계절/공사 유무만 다름)
-        self.similarity_loose_thresh = 0.35   # 확실히 다른 장소
-
-    async def cluster(self, photos: List[PhotoMeta]) -> List[List[PhotoMeta]]:
-        # 1. GPS 보정
-        self._correct_outliers_by_speed(photos)
-        self._adjust_gps_inaccuracy(photos)
-        
-        valid_photos = [p for p in photos if p.lat is not None and p.lon is not None]
-        no_gps_photos = [p for p in photos if p.lat is None or p.lon is None]
-        
-        if not valid_photos: return [photos]
-        
-        # 2. Vertex AI 임베딩 추출 (ThreadPool 사용)
-        img_paths = [p.path for p in valid_photos]
-        logger.info(f"Extracting Vertex AI embeddings for {len(valid_photos)} photos...")
-        
-        features = []
-        if img_paths:
-            # API 호출은 I/O 작업이므로 ThreadPool이 훨씬 빠르고 효율적임 (CPU 안 씀)
-            # max_workers를 높여서(예: 10~20) 병렬로 API를 쏘면 10초 내 처리 가능
-            with ThreadPoolExecutor(max_workers=20) as executor:
-                features = list(executor.map(_extract_vertex_feature, img_paths))
-        else:
-            features = [None] * len(valid_photos)
-
-        # 3. 가중치 거리 행렬 계산
-        dist_matrix = self._compute_weighted_distance_matrix(valid_photos, features)
-        
-        # 4. HDBSCAN 적용
-        try:
-            clusterer = HDBSCAN(
-                min_cluster_size=2,
-                min_samples=2,
-                metric='precomputed',
-                cluster_selection_epsilon=3.0, # 3.0 Weighted Meter
-                cluster_selection_method='leaf'
-            )
-            labels = clusterer.fit_predict(dist_matrix)
-        except Exception as e:
-            logger.error(f"HDBSCAN error: {e}")
-            return [valid_photos]
-        
-        # 5. 결과 정리
-        clusters = self._group_by_labels(valid_photos, labels)
-        if no_gps_photos: clusters.append(no_gps_photos)
-        return clusters
-
-    def _compute_weighted_distance_matrix(self, photos: List[PhotoMeta], features: List[Optional[np.ndarray]]) -> np.ndarray:
-        n = len(photos)
-        dist_matrix = np.zeros((n, n))
-        coords = np.array([[p.lat, p.lon] for p in photos])
-        
-        for i in range(n):
-            for j in range(i + 1, n):
-                _, _, gps_dist = self.geod.inv(coords[i][1], coords[i][0], coords[j][1], coords[j][0])
-                
-                weight_factor = 1.0 
-                
-                if features[i] is not None and features[j] is not None:
-                    # Cosine Distance (이미 정규화되었으므로 Dot Product만 하면 됨)
-                    # 범위: 0(동일) ~ 1(직교) ~ 2(반대)
-                    similarity = np.dot(features[i], features[j])
-                    struct_dist = 1.0 - similarity
-                    
-                    # Vertex AI 모델 신뢰도 기반 가중치
-                    
-                    # Case A: 의미적으로 매우 유사함 (공사 전후, 계절 변화 등은 AI가 '유사'하다고 판단함)
-                    if struct_dist < self.similarity_strict_thresh: 
-                        # GPS 거리 10%로 축소 -> 강력하게 병합
-                        weight_factor = 0.1 
-                        
-                    # Case B: 의미적으로 다름 (다른 건물, 다른 도로)
-                    elif struct_dist > self.similarity_loose_thresh:
-                        # GPS 거리 5배 확대 -> 강력하게 분리
-                        weight_factor = 5.0 + (struct_dist - 0.35) * 10.0
-                    
-                    # Case C: 애매함
-                    else:
-                        weight_factor = 1.0 + (struct_dist - 0.2) * 3.0
-                
-                else:
-                    # 임베딩 실패 시 GPS 의존
-                    if gps_dist < 10.0: weight_factor = 1.0
-                    else: weight_factor = 2.0
-
-                final_dist = gps_dist * weight_factor
-                
-                # GPS 물리적 한계 필터
-                if gps_dist > self.max_gps_tolerance_m:
-                    # AI가 99% 확신하는 경우(0.1)가 아니면 50m 밖은 다른 장소
-                    if weight_factor > 0.15: 
-                        final_dist = 1000.0
-
-                dist_matrix[i][j] = dist_matrix[j][i] = final_dist
-                
-        return dist_matrix
-
-    def _correct_outliers_by_speed(self, photos): 
-        # (기존 코드 유지)
-        timed_photos = [p for p in photos if p.timestamp is not None and p.lat is not None]
-        timed_photos.sort(key=lambda x: x.timestamp)
-        max_speed_mps = 5.0 
-        for i in range(1, len(timed_photos)):
-            prev = timed_photos[i-1]
-            curr = timed_photos[i]
-            dt = curr.timestamp - prev.timestamp
-            if dt <= 0: continue
-            _, _, dist = self.geod.inv(prev.lon, prev.lat, curr.lon, curr.lat)
-            if (dist / dt) > max_speed_mps:
-                curr.lat = prev.lat
-                curr.lon = prev.lon
-                if prev.alt is not None: curr.alt = prev.alt
-
-    def _adjust_gps_inaccuracy(self, photos): 
-        # (기존 코드 유지)
-        timed_photos = [p for p in photos if p.timestamp is not None]
-        timed_photos.sort(key=lambda x: x.timestamp)
-        for i in range(len(timed_photos) - 2, -1, -1):
-            p1 = timed_photos[i]
-            p2 = timed_photos[i+1]
-            if 0 <= (p2.timestamp - p1.timestamp) <= 20:
-                if p2.lat is not None and p2.lon is not None:
-                    p1.lat = p2.lat
-                    p1.lon = p2.lon
-                    if p2.alt is not None: p1.alt = p2.alt
-
-    def _group_by_labels(self, photos, labels):
-        # (기존 코드 유지)
-        clusters = {}
-        noise = []
-        for p, label in zip(photos, labels):
-            if label == -1: noise.append(p)
-            else: clusters.setdefault(label, []).append(p)
-        result = list(clusters.values())
-        if noise: 
-            for n_photo in noise: result.append([n_photo])
-        return result
-
-
-
-# 기존 HybridCluster 로직을 가져오되, 파라미터를 __init__에서 받도록 수정
 class TunableHybridCluster:
     def __init__(self, params: dict):
         self.geod = Geod(ellps="WGS84")
+        self.params = params
         
-        # Optuna가 제안한 파라미터들
-        self.strict_thresh = params['strict_thresh'] # 예: 0.15
-        self.loose_thresh = params['loose_thresh']   # 예: 0.35
-        self.eps = params['eps']                     # 예: 3.0
-        self.max_gps_tol = params['max_gps_tol']     # 예: 50.0
+        # 1. GPS Clustering Params (1단계)
+        self.gps_eps = 5.0  # 요청하신 대로 10m 고정 (또는 params에서 가져오기)
+        self.max_gps_tol = params.get('max_gps_tol', 40.0)
         
-        # 가중치 강도 조절 계수 (튜닝 대상)
-        self.w_merge = params.get('w_merge', 0.1)  # 병합 시 거리 축소 비율
-        self.w_split = params.get('w_split', 5.0)  # 분리 시 거리 확대 비율
+        # 2. Visual Split Params (2단계)
+        # 이미지로 나눌 때 "다르다"고 판단할 기준 (0.4 ~ 0.6 추천)
+        self.visual_split_thresh = params.get('loose_thresh', 0.5) 
+        self.split_min_size = 5  # 이 숫자보다 클 때만 이미지 분할 시도
+        self.min_cluster_size = params.get('min_cluster_size', 2)
+        self.min_samples = params.get('min_samples', 2)
+        
+        # 3. Size Enforcement (3단계)
+        self.max_cluster_size = params.get('max_cluster_size', 4)
 
-    def run_clustering(self, photos, features):
+    def run_clustering(self, photos: List[PhotoMeta], features: List[Optional[np.ndarray]]) -> np.ndarray:
         """
-        이미 추출된 features를 입력받아 클러스터링만 수행 (API 호출 X)
+        2-Step Clustering with Size Limit:
+        Step 1. GPS Distance (eps=10)로 1차 그룹핑
+        Step 2. 그룹 내 사진 수가 split_min_size 넘으면 Visual Distance로 2차 분할 (HDBSCAN)
+        Step 3. 여전히 max_cluster_size(5)를 넘는 클러스터는 K-Means로 강제 분할
         """
-        # 1. 가중치 거리 행렬 계산
-        dist_matrix = self._compute_matrix(photos, features)
-        
-        # 2. HDBSCAN
-        try:
-            clusterer = HDBSCAN(
-                min_cluster_size=2,
-                min_samples=2,
-                metric='precomputed',
-                cluster_selection_epsilon=self.eps, # 튜닝된 엡실론 사용
-                cluster_selection_method='leaf'
-            )
-            labels = clusterer.fit_predict(dist_matrix)
-        except Exception:
-            # 실패 시 모두 -1(노이즈) 처리
-            labels = np.full(len(photos), -1)
+        if not photos:
+            return np.array([])
             
+        n_samples = len(photos)
+        
+        # --- [Step 1] GPS 기반 1차 클러스터링 ---
+        gps_matrix = self._compute_gps_matrix(photos)
+        
+        try:
+            gps_clusterer = HDBSCAN(
+                min_cluster_size=self.min_cluster_size,
+                min_samples=self.min_samples,
+                metric='precomputed',
+                cluster_selection_epsilon=self.gps_eps, # eps = 8.0
+                cluster_selection_method='eom',
+                allow_single_cluster=True
+            )
+            # 1차 라벨 생성 (예: 0, 0, 0, 1, 1, -1, 2, 2...)
+            labels = gps_clusterer.fit_predict(gps_matrix)
+        except Exception as e:
+            logger.error(f"Step 1 GPS HDBSCAN failed: {e}")
+            return np.full(n_samples, -1)
+
+        # --- [Step 2] 거대 클러스터 대상 이미지 기반 재분할 (HDBSCAN) ---
+        
+        # 새로운 라벨을 부여하기 위해 현재 최대 라벨 번호 확인
+        max_label = labels.max()
+        next_label_id = max_label + 1
+        
+        # 존재하는 각 클러스터 ID에 대해 반복 (노이즈 -1 제외)
+        unique_labels = set(labels)
+        if -1 in unique_labels: 
+            unique_labels.remove(-1)
+            
+        for cluster_id in unique_labels:
+            # 해당 클러스터에 속한 사진의 인덱스 추출
+            indices = np.where(labels == cluster_id)[0]
+            
+            # 조건: 사진 수가 분할 최소 크기보다 큰가?
+            if len(indices) > self.split_min_size:
+                
+                # 해당 그룹의 Feature만 추출
+                sub_features = [features[i] for i in indices]
+                
+                # Feature가 하나라도 없으면 분할 불가 (Skip)
+                if any(f is None for f in sub_features):
+                    continue
+                
+                # 서브 그룹용 Visual Distance Matrix 계산
+                visual_matrix = self._compute_visual_matrix(sub_features)
+                
+                try:
+                    # 2차 클러스터링 (이미지 유사도 기반)
+                    sub_clusterer = HDBSCAN(
+                        min_cluster_size=2,
+                        min_samples=2,
+                        metric='precomputed',
+                        cluster_selection_epsilon=self.visual_split_thresh,
+                        allow_single_cluster=False 
+                    )
+                    sub_labels = sub_clusterer.fit_predict(visual_matrix)
+                    
+                    found_sub_clusters = set(sub_labels)
+                    
+                    for sub_id in found_sub_clusters:
+                        sub_indices = indices[sub_labels == sub_id]
+                        
+                        # 기존 cluster_id를 덮어씌움 (모두 새 ID 부여하여 충돌 방지)
+                        labels[sub_indices] = next_label_id
+                        next_label_id += 1
+                        
+                except Exception as e:
+                    logger.warning(f"Step 2 Visual Split failed for cluster {cluster_id}: {e}")
+                    # 실패 시 기존 라벨 유지
+
+        # --- [Step 3] Force Split if cluster size > max_cluster_size (K-Means) ---
+        
+        # Step 2까지 거친 labels에 대해 다시 검사
+        unique_labels = set(labels)
+        if -1 in unique_labels:
+            unique_labels.remove(-1)
+            
+        # list로 복사해서 순회 (labels 배열이 바뀌므로)
+        for cluster_id in list(unique_labels):
+            indices = np.where(labels == cluster_id)[0]
+            n_members = len(indices)
+            
+            if n_members > self.max_cluster_size:
+                # 쪼개야 할 개수 계산 (올림)
+                n_splits = math.ceil(n_members / self.max_cluster_size)
+                
+                # Feature 추출
+                sub_features = [features[i] for i in indices]
+                
+                # Feature가 하나라도 없으면 분할 불가
+                if any(f is None for f in sub_features):
+                    continue 
+                
+                try:
+                    # K-Means로 강제 분할
+                    kmeans = KMeans(n_clusters=n_splits, random_state=42, n_init=10)
+                    sub_labels = kmeans.fit_predict(sub_features)
+                    
+                    # 서브 라벨 매핑 (0번부터 n_splits-1번까지)
+                    for k in range(n_splits):
+                        sub_indices = indices[sub_labels == k]
+                        # 모두에게 새로운 ID 부여 (기존 ID 혼동 방지)
+                        labels[sub_indices] = next_label_id
+                        next_label_id += 1
+                            
+                except Exception as e:
+                    logger.warning(f"Step 3 K-Means force split failed for cluster {cluster_id}: {e}")
+
         return labels
 
-    def _compute_matrix(self, photos, features):
+    def _compute_gps_matrix(self, photos: List[PhotoMeta]) -> np.ndarray:
+        """순수 GPS 거리 매트릭스 계산"""
         n = len(photos)
         dist_matrix = np.zeros((n, n))
-        coords = np.array([[p.lat, p.lon] for p in photos])
-        
-        # GPS 거리 계산 (반복문 최적화를 위해 단순화하거나 geod 유지)
-        # 1000장이면 반복문이 50만번 돌기 때문에, 여기서 시간이 좀 걸림.
-        # 최적화: pdist 등을 쓰면 좋지만, 가중치 로직 때문에 이중 루프 유지
+        coords = np.array([[p.lat if p.lat else 0.0, p.lon if p.lon else 0.0] for p in photos])
         
         for i in range(n):
             for j in range(i + 1, n):
-                _, _, gps_dist = self.geod.inv(coords[i][1], coords[i][0], coords[j][1], coords[j][0])
-                
-                weight_factor = 1.0
-                
-                if features[i] is not None and features[j] is not None:
-                    similarity = np.dot(features[i], features[j]) # features는 이미 norm 되어 있다고 가정
-                    struct_dist = 1.0 - similarity
-                    
-                    # --- [튜닝 포인트: 동적 가중치 로직] ---
-                    if struct_dist < self.strict_thresh:
-                        weight_factor = self.w_merge # 예: 0.1
-                    elif struct_dist > self.loose_thresh:
-                        weight_factor = self.w_split # 예: 5.0
-                    else:
-                        # 선형 보간: strict와 loose 사이를 부드럽게 연결
-                        # (복잡하면 단순 1.0 처리해도 됨)
-                        slope = (self.w_split - self.w_merge) / (self.loose_thresh - self.strict_thresh)
-                        weight_factor = self.w_merge + slope * (struct_dist - self.strict_thresh)
+                _, _, dist = self.geod.inv(coords[i][1], coords[i][0], coords[j][1], coords[j][0])
+                dist_matrix[i][j] = dist_matrix[j][i] = dist
+        return dist_matrix
 
-                final_dist = gps_dist * weight_factor
-                
-                if gps_dist > self.max_gps_tol:
-                     # w_merge보다 조금이라도 크면 컷
-                    if weight_factor > (self.w_merge + 0.1): 
-                        final_dist = 1000.0
-
-                dist_matrix[i][j] = dist_matrix[j][i] = final_dist
+    def _compute_visual_matrix(self, features: List[np.ndarray]) -> np.ndarray:
+        """순수 Visual Distance 매트릭스 계산 (Cosine Distance)"""
+        n = len(features)
+        dist_matrix = np.zeros((n, n))
         
+        for i in range(n):
+            for j in range(i + 1, n):
+                # Cosine Similarity: -1 ~ 1 (1에 가까울수록 유사)
+                similarity = np.dot(features[i], features[j])
+                
+                # Distance: 0 ~ 2 (0에 가까울수록 유사)
+                # 보통 0.0 ~ 1.0 사이 (유사도 양수 가정 시)
+                dist = 1.0 - similarity
+                
+                # 음수 방지 및 범위 보정
+                if dist < 0: dist = 0.0
+                
+                dist_matrix[i][j] = dist_matrix[j][i] = dist
         return dist_matrix
