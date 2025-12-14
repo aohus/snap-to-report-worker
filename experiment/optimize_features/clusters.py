@@ -13,10 +13,10 @@ from PIL import Image, ImageFile
 from pyproj import Geod
 
 from app.domain.clusterers.base import Clusterer
+from app.models.photometa import PhotoMeta
 
 # 사용자 정의 모듈
-from app.domain.storage.factory import get_storage_client
-from app.models.photometa import PhotoMeta
+from experiment.optimize_features.clusters import _extract_vertex_feature
 
 try:
     from sklearn.cluster import HDBSCAN
@@ -26,107 +26,6 @@ except ImportError:
 logger = logging.getLogger(__name__)
 ImageFile.LOAD_TRUNCATED_IMAGES = True
 
-# --- [Vertex AI Client Wrapper] ---
-
-class VertexEmbeddingClient:
-    _instance = None
-    
-    def __init__(self, project_id: str, location: str = "us-central1"):
-        self.project_id = project_id
-        self.location = location
-        aiplatform.init(project=project_id, location=location)
-        # 멀티모달 임베딩 모델
-        self.client = aiplatform.predicition.PredictionServiceClient(
-            client_options={"api_endpoint": f"{location}-aiplatform.googleapis.com"}
-        )
-        self.endpoint = f"projects/{project_id}/locations/{location}/publishers/google/models/multimodalembedding@001"
-
-    @classmethod
-    def get_instance(cls):
-        # 실제 환경에 맞게 Project ID와 Region 설정 필요
-        # 환경 변수에서 가져오도록 수정 권장
-        if cls._instance is None:
-            # TODO: 프로젝트 ID를 설정 파일이나 환경 변수에서 가져오세요.
-            # 예: os.getenv("GOOGLE_CLOUD_PROJECT")
-            cls._instance = cls("YOUR_PROJECT_ID", "us-central1") 
-        return cls._instance
-
-    def get_embedding(self, image_bytes: bytes) -> Optional[np.ndarray]:
-        try:
-            encoded_content = base64.b64encode(image_bytes).decode("utf-8")
-            instance = struct_pb2.Struct()
-            instance.update({"image": {"bytesBase64Encoded": encoded_content}})
-            
-            instances = [instance]
-            # 텍스트 없이 이미지만 보냄 -> 1408차원 벡터 반환
-            response = self.client.predict(endpoint=self.endpoint, instances=instances)
-            
-            embedding = response.predictions[0]['imageEmbedding']
-            return np.array(embedding, dtype=np.float32)
-        except Exception as e:
-            logger.error(f"Vertex AI API Error: {e}")
-            return None
-
-def _extract_vertex_feature(path: str) -> Optional[np.ndarray]:
-    """
-    이미지 다운로드 -> 리사이즈 -> Vertex AI API 호출 -> 임베딩 반환
-    """
-    try:
-        # 1. 이미지 다운로드
-        storage = get_storage_client()
-        img_data = None
-        
-        if "storage.googleapis.com" in path or path.startswith("gs://"):
-            try:
-                if path.startswith("gs://"):
-                    blob_name = path.replace("gs://", "").split("/", 1)[1]
-                else:
-                    blob_name = path.split("storage.googleapis.com/")[1].split("/", 1)[1]
-                
-                bucket = storage.bucket
-                blob = bucket.blob(blob_name)
-                # Vertex AI는 전체 이미지를 분석하므로 전체 다운로드 필요
-                # 하지만 네트워크 속도를 위해 Resize 후 보낼 것이므로
-                # 메모리에 로드 가능한 수준이어야 함. 
-                # 원본이 너무 크면(10MB+) Partial로 헤더만 읽기는 불가능.
-                # 다행히 Vertex AI는 20MB 제한이 있으므로 대부분 통과.
-                img_data = blob.download_as_bytes()
-            except Exception:
-                return None
-        else:
-            with open(path, "rb") as f:
-                img_data = f.read()
-
-        if not img_data: return None
-
-        # 2. 이미지 전처리 (리사이즈)
-        # API 전송 시간 단축 및 비용 절감을 위해 적절히 리사이즈
-        with Image.open(io.BytesIO(img_data)) as img:
-            img = img.convert("RGB")
-            # 긴 변 기준 800px 정도로 리사이즈 (디테일 유지하면서 용량 줄임)
-            img.thumbnail((800, 800))
-            
-            # 다시 바이트로 변환
-            output = io.BytesIO()
-            img.save(output, format="JPEG", quality=85)
-            resized_bytes = output.getvalue()
-
-        # 3. Vertex AI API 호출
-        # 여기서 싱글톤 클라이언트 호출
-        # (주의: 프로젝트 ID 설정 필요)
-        ai_client = VertexEmbeddingClient.get_instance()
-        vector = ai_client.get_embedding(resized_bytes)
-        
-        # 정규화 (Cosine Similarity 계산을 위해 미리 해두면 좋음)
-        if vector is not None:
-            norm = np.linalg.norm(vector)
-            if norm > 0: vector /= norm
-            
-        return vector
-
-    except Exception as e:
-        logger.warning(f"Feature extraction failed for {path}: {e}")
-        return None
 
 
 class HybridCluster(Clusterer):
@@ -275,3 +174,84 @@ class HybridCluster(Clusterer):
         if noise: 
             for n_photo in noise: result.append([n_photo])
         return result
+
+
+
+# 기존 HybridCluster 로직을 가져오되, 파라미터를 __init__에서 받도록 수정
+class TunableHybridCluster:
+    def __init__(self, params: dict):
+        self.geod = Geod(ellps="WGS84")
+        
+        # Optuna가 제안한 파라미터들
+        self.strict_thresh = params['strict_thresh'] # 예: 0.15
+        self.loose_thresh = params['loose_thresh']   # 예: 0.35
+        self.eps = params['eps']                     # 예: 3.0
+        self.max_gps_tol = params['max_gps_tol']     # 예: 50.0
+        
+        # 가중치 강도 조절 계수 (튜닝 대상)
+        self.w_merge = params.get('w_merge', 0.1)  # 병합 시 거리 축소 비율
+        self.w_split = params.get('w_split', 5.0)  # 분리 시 거리 확대 비율
+
+    def run_clustering(self, photos, features):
+        """
+        이미 추출된 features를 입력받아 클러스터링만 수행 (API 호출 X)
+        """
+        # 1. 가중치 거리 행렬 계산
+        dist_matrix = self._compute_matrix(photos, features)
+        
+        # 2. HDBSCAN
+        try:
+            clusterer = HDBSCAN(
+                min_cluster_size=2,
+                min_samples=2,
+                metric='precomputed',
+                cluster_selection_epsilon=self.eps, # 튜닝된 엡실론 사용
+                cluster_selection_method='leaf'
+            )
+            labels = clusterer.fit_predict(dist_matrix)
+        except Exception:
+            # 실패 시 모두 -1(노이즈) 처리
+            labels = np.full(len(photos), -1)
+            
+        return labels
+
+    def _compute_matrix(self, photos, features):
+        n = len(photos)
+        dist_matrix = np.zeros((n, n))
+        coords = np.array([[p.lat, p.lon] for p in photos])
+        
+        # GPS 거리 계산 (반복문 최적화를 위해 단순화하거나 geod 유지)
+        # 1000장이면 반복문이 50만번 돌기 때문에, 여기서 시간이 좀 걸림.
+        # 최적화: pdist 등을 쓰면 좋지만, 가중치 로직 때문에 이중 루프 유지
+        
+        for i in range(n):
+            for j in range(i + 1, n):
+                _, _, gps_dist = self.geod.inv(coords[i][1], coords[i][0], coords[j][1], coords[j][0])
+                
+                weight_factor = 1.0
+                
+                if features[i] is not None and features[j] is not None:
+                    similarity = np.dot(features[i], features[j]) # features는 이미 norm 되어 있다고 가정
+                    struct_dist = 1.0 - similarity
+                    
+                    # --- [튜닝 포인트: 동적 가중치 로직] ---
+                    if struct_dist < self.strict_thresh:
+                        weight_factor = self.w_merge # 예: 0.1
+                    elif struct_dist > self.loose_thresh:
+                        weight_factor = self.w_split # 예: 5.0
+                    else:
+                        # 선형 보간: strict와 loose 사이를 부드럽게 연결
+                        # (복잡하면 단순 1.0 처리해도 됨)
+                        slope = (self.w_split - self.w_merge) / (self.loose_thresh - self.strict_thresh)
+                        weight_factor = self.w_merge + slope * (struct_dist - self.strict_thresh)
+
+                final_dist = gps_dist * weight_factor
+                
+                if gps_dist > self.max_gps_tol:
+                     # w_merge보다 조금이라도 크면 컷
+                    if weight_factor > (self.w_merge + 0.1): 
+                        final_dist = 1000.0
+
+                dist_matrix[i][j] = dist_matrix[j][i] = final_dist
+        
+        return dist_matrix

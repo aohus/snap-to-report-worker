@@ -58,16 +58,31 @@ def process_directory(input_root: Path, output_root: Path, current_dir: Path, th
 
     # 상대 경로 계산
     rel_path = current_dir.relative_to(input_root)
-    out_dir_name = str(rel_path).replace("/", "-")
+
+    # Initialize counts for photos and GPS before first pass
+    count_photos_temp = 0
+    count_gps_temp = 0
+
+    # First pass: Count photos and GPS info
+    for img in img_files:
+        exif = extractor._export_exif_sync(str(img))
+        lat, lon, direction = extractor._get_gps_from_exif(exif)
+        
+        count_photos_temp += 1
+        if lat and lon:
+            count_gps_temp += 1
+
+    out_dir_name = str(rel_path).replace("/", "-") + f"_{count_gps_temp}:{count_photos_temp}"
     out_dir = output_root / out_dir_name
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    # 메타데이터 수집
+    # Initialize for detailed metadata collection and file copying
     count_photos = 0
-    count_gps = 0
+    count_gps = 0 # This will be redundant but kept for consistency, it should be equal to count_gps_temp
     size_bins = {"0-1MB": 0, "1-10MB": 0, "10MB-": 0}
     date_dist = defaultdict(int)
 
+    # Second pass: Collect detailed metadata and copy files
     for img in img_files:
         exif = extractor._export_exif_sync(str(img))
         lat, lon, direction = extractor._get_gps_from_exif(exif)
@@ -103,7 +118,7 @@ def process_directory(input_root: Path, output_root: Path, current_dir: Path, th
         "사진날짜": dict(sorted(date_dist.items()))
     }
 
-    with open(out_dir / f"metadata-{count_gps}:{count_photos}.json", "w", encoding="utf-8") as f:
+    with open(out_dir / "metadata.json", "w", encoding="utf-8") as f:
         json.dump(metadata, f, ensure_ascii=False, indent=2)
 
     print(f"[OK] {current_dir} → {out_dir} 생성 완료 (사진 {count_photos}장)")
@@ -121,4 +136,4 @@ def traverse(input_root: str, output_root: str):
 
 # ---------------- 실행 예시 ----------------
 if __name__ == "__main__":
-    traverse("/Volumes/SSD(APFS)/사진(프로그램용)", '/Volumes/SSD(APFS)/작업사진_구조화')
+    traverse("/Volumes/SSD(APFS)/느티나무", '/Volumes/SSD(APFS)/느티나무구조화')
