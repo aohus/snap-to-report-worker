@@ -11,6 +11,7 @@ from experiment.optimize_features.extractors.base import BaseFeatureExtractor
 logger = logging.getLogger(__name__)
 ImageFile.LOAD_TRUNCATED_IMAGES = True
 
+
 class MobileNetExtractor(BaseFeatureExtractor):
     _instance = None
     _model = None
