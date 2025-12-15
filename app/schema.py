@@ -1,6 +1,6 @@
-from typing import List, Optional, Any
+from typing import Any, List, Optional
 
-from pydantic import BaseModel, Field, HttpUrl, validator
+from pydantic import BaseModel, Field, HttpUrl, fields_validator
 
 
 class ClusterRequest(BaseModel):
@@ -23,7 +23,7 @@ class ClusterRequest(BaseModel):
         True, description="사람 영역을 마스킹할지 여부 (DETR 사용)"
     )
 
-    @validator("photo_paths")
+    @fields_validator("photo_paths")
     def validate_paths(cls, v: list[str]) -> list[str]:
         if not v:
             raise ValueError("photo_paths 는 비어 있을 수 없습니다.")

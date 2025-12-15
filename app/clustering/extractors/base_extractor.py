@@ -1,31 +1,9 @@
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Iterable, List, Optional
+from typing import Optional
 
 import numpy as np
-from common.models import PhotoMeta
 
-
-class Clusterer(ABC):
-    """Abstract base class for a clustering strategy."""
-
-    @abstractmethod
-    async def cluster(self, photos: List[PhotoMeta]) -> List[List[PhotoMeta]]:
-        """
-        Applies a clustering strategy to a list of photos.
-
-        Args:
-            photos: A list of PhotoMeta objects to cluster.
-
-        Returns:
-            A list of clusters, where each cluster is a list of PhotoMeta objects.
-        """
-        raise NotImplementedError()
-
-    @staticmethod
-    def condition(photos: Iterable[PhotoMeta]) -> bool:
-        """Determines whether the strategy should be applied to the given photos."""
-        return True
 
 class BaseDescriptorExtractor(ABC):
     """Abstract base class for extracting image descriptors."""

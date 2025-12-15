@@ -15,6 +15,7 @@ from torchvision.transforms.functional import to_pil_image, to_tensor
 
 logger = logging.getLogger(__name__)
 
+
 class SemanticSegmenter:
     """
     Detects specific classes in an image using a deep learning model

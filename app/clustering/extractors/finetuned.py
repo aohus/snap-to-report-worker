@@ -1,18 +1,19 @@
+import logging
+from pathlib import Path
+from typing import Optional
+
+import numpy as np
+import timm
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import timm
-from pathlib import Path
-import logging
-from typing import Optional
-import numpy as np
-from PIL import Image, ImageFile
+from clustering.extractors.base_extractor import BaseDescriptorExtractor
+from clustering.extractors.people_detector import PeopleDetector
 from config import ClusteringConfig
 from core.device import DEVICE
-from services.clustering.base import BaseDescriptorExtractor
-from services.clustering.people_detector import PeopleDetector
-from torchvision import transforms
+from PIL import Image, ImageFile
 from timm.data.constants import IMAGENET_DEFAULT_MEAN, IMAGENET_DEFAULT_STD
+from torchvision import transforms
 
 # Allow loading truncated images
 ImageFile.LOAD_TRUNCATED_IMAGES = True
@@ -22,6 +23,7 @@ logger = logging.getLogger(__name__)
 # --- Reusing MultiModalNet definition from finetuning/model.py ---
 # Ideally this should be in a shared common module, but for now we duplicate 
 # or load it. Since we need to load weights, we need the exact class definition.
+
 
 class MultiModalNet(nn.Module):
     def __init__(self, embedding_dim=128, meta_dim=16, backbone_name='tf_efficientnet_b3_ns'):

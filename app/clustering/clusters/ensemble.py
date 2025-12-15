@@ -8,13 +8,15 @@ try:
 except ImportError:
     hdbscan = None
     print("hdbscan not found, falling back to DBSCAN. For better results, please install it: pip install hdbscan")
-from app.domain.clusterers.base_clusterer import Clusterer
-from app.domain.clusterers.deep_clusterer import DeepClusterer
-from app.models.photometa import PhotoMeta
 from sklearn.cluster import DBSCAN
 from sklearn.preprocessing import normalize
 
+from app.domain.clusterers.base_clusterer import Clusterer
+from app.domain.clusterers.deep_clusterer import DeepClusterer
+from app.models.photometa import PhotoMeta
+
 logger = logging.getLogger(__name__)
+
 
 class EnsembleClusterer(Clusterer):
     """

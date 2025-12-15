@@ -293,7 +293,8 @@ def run_optimization(dataset_path: str, n_trials: int, mode: str):
     print("---------------------------------------")
     
     # Save best params to json
-    save_path = os.path.join(os.path.dirname(dataset_path), "best_params.json")
+    name = os.path.basename(dataset_path).split('.')[0]
+    save_path = os.path.join(os.path.dirname(dataset_path), f"params_{name}.json")
     import json
     with open(save_path, "w") as f:
         json.dump(study.best_params, f, indent=4)
@@ -303,7 +304,8 @@ def run_optimization(dataset_path: str, n_trials: int, mode: str):
 
 
 def load_best_params(dataset_path: str = "./experiment/optimize_features/features/dataset_cache.pkl") -> dict:
-    save_path = os.path.join(os.path.dirname(dataset_path), "best_params.json")
+    name = os.path.basename(dataset_path).split('.')[0]
+    save_path = os.path.join(os.path.dirname(dataset_path), f"params+{name}.json")
     if os.path.exists(save_path):
         with open(save_path, "r") as f:
             return json.load(f)
@@ -335,7 +337,7 @@ if __name__ == "__main__":
         if args.dataset_name:
             dataset_name = args.dataset_name
         else:
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            timestamp = datetime.now().strftime("%y%m%d_%H%M%S")
             dataset_name = f"dataset_{args.mode}_{'masking' if args.masking else 'nomask'}_{timestamp}.pkl"
 
         sql_dump = args.sql_dump
