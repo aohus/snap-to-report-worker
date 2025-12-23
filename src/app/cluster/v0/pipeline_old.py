@@ -3,7 +3,7 @@ import logging
 import time
 from typing import Dict, List, Type
 
-from common.models import PhotoMeta
+from models.photometa import PhotoMeta
 from config import ClusteringConfig
 from services.clustering.base import (
     BaseDescriptorExtractor,

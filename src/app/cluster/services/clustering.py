@@ -11,7 +11,7 @@ from app.cluster.services.formatters import format_cluster_response
 from core.storage.factory import get_storage_client
 from core.storage.local import LocalStorageService
 from app.config import JobConfig, ClusteringConfig
-from app.common.models import Photo
+from app.models.photometa import Photo
 
 logger = logging.getLogger(__name__)
 
@@ -103,7 +103,7 @@ class ClusteringService:
 
         except Exception as e:
             logger.error(f"💥 [Task {task_id}] Failed: {e}")
-            logger.debug(traceback.format_exc())
+            logger.error(traceback.format_exc())
             
             if req.webhook_url:
                 await self.callback_sender.send_error(

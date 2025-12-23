@@ -15,7 +15,7 @@ from app.cluster.services.metadata_extractor import MetadataExtractor
 #     from core.storage.base import StorageService
 from core.storage.base import StorageService
 from core.storage.local import LocalStorageService
-from app.common.models import Photo, PhotoMeta
+from app.models.photometa import Photo, PhotoMeta
 
 logger = logging.getLogger(__name__)
 
@@ -88,11 +88,11 @@ class PhotoClusteringPipeline:
                     path=p.storage_path,
                     thumbnail_path=p.thumbnail_path,
                     original_name=p.original_filename,
+                    device=p.device,
                     lat=p.meta_lat,
                     lon=p.meta_lon,
                     alt=None,  # Altitude not stored in DB yet
                     timestamp=p.meta_timestamp.timestamp() if p.meta_timestamp else None,
-                    focal_35mm=None,
                     orientation=None,
                     digital_zoom=None,
                     scene_capture_type=None,

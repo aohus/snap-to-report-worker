@@ -5,7 +5,7 @@ from typing import List, Optional, Tuple
 
 import numpy as np
 from app.cluster.clusters.base import Clusterer
-from app.common.models import PhotoMeta
+from app.models.photometa import PhotoMeta
 from pyproj import Geod
 from sklearn.cluster import DBSCAN, HDBSCAN, OPTICS
 

@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
-from common.models import PhotoMeta
+from models.photometa import PhotoMeta
 from config import ClusteringConfig
 from services.clustering.base import (
     BaseDescriptorExtractor,

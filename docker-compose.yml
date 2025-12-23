@@ -14,10 +14,8 @@ services:
       - MEDIA_ROOT=/app/media
       # Core Engine internal media URL (for downloads from itself if needed)
       - MEDIA_URL=http://localhost:8001/media
-      # Callback to backend (running on host network or accessible via host.docker.internal)
-      # Backend is on port 8000 on host machine (mapped from docker)
       - CALLBACK_BASE_URL=http://host.docker.internal:8000/api
-      - GCS_BUCKET_NAME=${GCS_BUCKET_NAME}
+      - GCS_BUCKET_NAME=${GCS_BUCKET_NAME:-snap-2-report-assets-1764756531}
       - GOOGLE_APPLICATION_CREDENTIALS=/cred_gcs.json
     volumes:
       - ./media:/app/media

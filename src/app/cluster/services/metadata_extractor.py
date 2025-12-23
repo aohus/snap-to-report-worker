@@ -7,7 +7,7 @@ from typing import Any, Optional, Tuple, Union
 
 import httpx
 import piexif
-from app.common.models import PhotoMeta
+from app.models.photometa import PhotoMeta
 
 logger = logging.getLogger(__name__)
 
@@ -28,15 +28,24 @@ class MetadataExtractor:
                     resp = await client.get(image_path)
                     resp.raise_for_status()
                     content = resp.content
+                # Run the synchronous piexif.load with bytes
                 exif = self._export_exif_sync(content)
             else:
+                # Run the synchronous piexif.load in a thread pool (implicitly via sync call here for now, or wrap if needed)
                 exif = self._export_exif_sync(image_path)
         except Exception as e:
             logger.error(f"Failed to run exif extraction for {image_path}: {e}")
             exif = None
+        
+        return self._build_photometa(image_path, exif)
 
-        # lat, lon, alt, direction = self._get_gps_from_exif(exif)
-        lat, lon, direction = self._get_gps_from_exif(exif)
+    def extract_from_bytes(self, content: bytes, file_name: str) -> PhotoMeta:
+        """Extracts metadata directly from image bytes."""
+        exif = self._export_exif_sync(content)
+        return self._build_photometa(file_name, exif)
+
+    def _build_photometa(self, path: str, exif: Optional[dict]) -> PhotoMeta:
+        lat, lon, alt, direction = self._get_gps_from_exif(exif)
         timestamp = self._parse_datetime_from_exif(exif)
 
         orientation = None
@@ -48,13 +57,6 @@ class MetadataExtractor:
         white_balance = None
         exposure_time = None
         flash = None
-
-        # for e in dir(piexif.ExifIFD):
-        #     if not e.startswith("__"):
-        #         if e in ["ISOSpeedRatings", "FNumber", "ExposureTime", "FocalLength"]:
-        #             tag = getattr(piexif.ExifIFD, e)
-        #             if tag in exif.get("Exif", {}):
-        #                 print(f"Tag {e} ({tag}): {exif['Exif'][tag]}")
 
         if exif is not None:
             exif_0th = exif.get("0th", {})
@@ -85,10 +87,11 @@ class MetadataExtractor:
             scene_capture_type = exif_exif.get(piexif.ExifIFD.SceneCaptureType)
             white_balance = exif_exif.get(piexif.ExifIFD.WhiteBalance)
             flash = exif_exif.get(piexif.ExifIFD.Flash)
+
         return PhotoMeta(
             id=generate_short_id('meta'),
-            path=image_path,
-            original_name=image_path.split("/")[-1],
+            path=path,
+            original_name=path.split("/")[-1],
             device=device,
             lat=lat,
             lon=lon,
@@ -154,24 +157,29 @@ class MetadataExtractor:
                 microseconds = 0
         
         # Timezone
+        # Default to KST (Korea Standard Time) if no offset is provided
         offset_bytes = exif_exif.get(piexif.ExifIFD.OffsetTimeOriginal)
-        tz = timezone.utc
+        tz = timezone(timedelta(hours=9))
+        
         if offset_bytes:
             try:
                 offset_str = offset_bytes.decode()
-                sign = -1 if offset_str[0] == "-" else 1
-                h = int(offset_str[1:3])
-                m = int(offset_str[4:6])
-                tz = timezone(sign * timedelta(hours=h, minutes=m))
-            except (UnicodeDecodeError, ValueError):
-                pass # Fallback to UTC
+                if len(offset_str) >= 6:
+                     sign = -1 if offset_str[0] == "-" else 1
+                     h = int(offset_str[1:3])
+                     m = int(offset_str[4:6])
+                     tz = timezone(sign * timedelta(hours=h, minutes=m))
+                else:
+                     logger.warning(f"Invalid OffsetTime format: {offset_str}")
+            except (UnicodeDecodeError, ValueError, IndexError):
+                pass 
 
         dt = base_dt.replace(microsecond=microseconds, tzinfo=tz)
         return dt.timestamp()
 
     def _get_gps_from_exif(self, exif: Optional[dict]) -> Tuple[Optional[float], Optional[float], Optional[float], Optional[float]]:
         if exif is None or "GPS" not in exif:
-            return None, None, None
+            return None, None, None, None
 
         gps = exif["GPS"]
         def convert_coord(coord, ref):
@@ -188,7 +196,7 @@ class MetadataExtractor:
                             pass
                     if isinstance(ref, str):
                         ref = ref.upper()
-
+                
                 if ref in [b"N", "N", b"E", "E"]:
                     return result
                 elif ref in [b"S", "S", b"W", "W"]:
@@ -202,19 +210,42 @@ class MetadataExtractor:
         lat = convert_coord(gps.get(piexif.GPSIFD.GPSLatitude), gps.get(piexif.GPSIFD.GPSLatitudeRef))
         lon = convert_coord(gps.get(piexif.GPSIFD.GPSLongitude), gps.get(piexif.GPSIFD.GPSLongitudeRef))
         
-        # alt = None
-        # if piexif.GPSIFD.GPSAltitude in gps:
-        #     alt_val = gps[piexif.GPSIFD.GPSAltitude]
-        #     if alt_val[1] != 0:
-        #         alt = alt_val[0] / alt_val[1]
+        # Filter out invalid (0, 0) coordinates which often indicate GPS init failure
+        if lat == 0.0 and lon == 0.0:
+            return None, None, None, None
+
+        alt = None
+        if piexif.GPSIFD.GPSAltitude in gps:
+            alt_val = gps[piexif.GPSIFD.GPSAltitude]
+            if alt_val[1] != 0:
+                alt = alt_val[0] / alt_val[1]
                 
-        #         # Handle Altitude Reference
-        #         # 0 = Above Sea Level, 1 = Below Sea Level
-        #         alt_ref = gps.get(piexif.GPSIFD.GPSAltitudeRef)
-        #         if alt_ref == 1 or alt_ref == b'\x01':
-        #             alt = -alt
+                # Handle Altitude Reference
+                # 0 = Above Sea Level, 1 = Below Sea Level
+                alt_ref = gps.get(piexif.GPSIFD.GPSAltitudeRef)
+                if alt_ref == 1 or alt_ref == b'\x01':
+                    alt = -alt
 
         direction = self._rational_to_float(gps.get(piexif.GPSIFD.GPSImgDirection))
+        
+        # Correct direction if it refers to Magnetic North
+        # Korean Average Magnetic Declination is approx 8.5 degrees West (as of 2020s)
+        # True North = Magnetic North - 8.5
+        # if direction is not None:
+        #     dir_ref = gps.get(piexif.GPSIFD.GPSImgDirectionRef)
+        #     if dir_ref:
+        #         if isinstance(dir_ref, bytes):
+        #             try:
+        #                 dir_ref = dir_ref.decode().upper()
+        #             except:
+        #                 pass
+        #         elif isinstance(dir_ref, str):
+        #             dir_ref = dir_ref.upper()
 
-        # return lat, lon, alt, direction
-        return lat, lon, direction
+        #         # 'M' stands for Magnetic North
+        #         if dir_ref == 'M':
+        #             direction -= 8.5
+        #             if direction < 0:
+        #                 direction += 360.0
+
+        return lat, lon, alt, direction

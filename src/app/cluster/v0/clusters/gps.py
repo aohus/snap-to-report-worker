@@ -4,7 +4,7 @@ from collections import defaultdict
 from typing import List, Optional, Tuple
 
 import numpy as np
-from common.models import PhotoMeta
+from models.photometa import PhotoMeta
 from config import ClusteringConfig
 from pyproj import Geod
 from services.clustering.base import Clusterer

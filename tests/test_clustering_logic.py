@@ -20,7 +20,7 @@ sys.path.append(os.path.join(os.path.dirname(__file__), "../src"))
 from app.cluster.services.clustering import ClusteringService
 from app.cluster.schema import ClusterRequest
 from app.config import JobConfig
-from app.common.models import Photo
+from app.models.photometa import Photo
 
 @pytest.fixture
 def callback_sender():
