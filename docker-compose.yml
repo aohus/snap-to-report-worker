@@ -1,0 +1,26 @@
+services:
+  core-engine:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: core-engine
+    ports:
+      - "8001:8000"
+    environment:
+      - PROJECT_NAME=Core Engine
+      - LOG_LEVEL=DEBUG
+      - DATABASE_URL=sqlite+aiosqlite:////tmp/core.db
+      - STORAGE_TYPE=gcs
+      - MEDIA_ROOT=/app/media
+      # Core Engine internal media URL (for downloads from itself if needed)
+      - MEDIA_URL=http://localhost:8001/media
+      # Callback to backend (running on host network or accessible via host.docker.internal)
+      # Backend is on port 8000 on host machine (mapped from docker)
+      - CALLBACK_BASE_URL=http://host.docker.internal:8000/api
+      - GCS_BUCKET_NAME=${GCS_BUCKET_NAME}
+      - GOOGLE_APPLICATION_CREDENTIALS=/cred_gcs.json
+    volumes:
+      - ./media:/app/media
+      - ./src/config/gcp/.cred_gcs.json:/cred_gcs.json
+    extra_hosts:
+      - "host.docker.internal:host-gateway"

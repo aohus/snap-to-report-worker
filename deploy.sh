@@ -2,9 +2,10 @@
 #!/bin/bash
 PROJECT_ID=$(gcloud config get-value project)
 REGION="asia-northeast3"
-REPO_NAME="cluster-repo"
-IMAGE_NAME="cluster-backend-v2"
-SERVICE_NAME="cluster-backend"
+REPO_NAME="snap-2-report-repo"
+IMAGE_NAME="core-engine"
+SERVICE_NAME="snap-2-report-core"
+
 # 1. Cloud Build를 사용하여 이미지 빌드 및 푸시
 # (로컬에서 빌드하지 않고 구글 클라우드 서버에서 빌드하여 로컬 자원 절약)
 echo "🚀 Building container image..."
