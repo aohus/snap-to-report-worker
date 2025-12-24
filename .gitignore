@@ -125,3 +125,5 @@ exp_results/
 *.pt
 *.pth
 .cred_gcs.json
+# Large documents
+docs/*.hwp
