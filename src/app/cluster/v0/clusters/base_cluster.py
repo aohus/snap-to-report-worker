@@ -1,7 +1,7 @@
 from abc import ABC, abstractmethod
 from typing import Iterable
 
-from models.photometa import PhotoMeta
+from app.cluster.models import PhotoMeta
 
 
 class Clusterer(ABC):

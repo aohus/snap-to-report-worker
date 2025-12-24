@@ -9,12 +9,11 @@ from typing import List, Optional
 
 import numpy as np
 from PIL import Image
-from pyproj import Geod
 from sklearn.cluster import KMeans
 
 from core.storage.factory import get_storage_client
-from app.models.photometa import PhotoMeta
 from app.utils.performance import PerformanceMonitor
+from app.cluster.models import PhotoMeta
 from app.cluster.clusters.base import Clusterer
 from app.cluster.extractors.cosplace import CosPlaceExtractor
 

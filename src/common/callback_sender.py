@@ -1,12 +1,12 @@
 import logging
 import httpx
 import asyncio
-from typing import Any, Dict, Optional
+from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
 
 class CallbackSender:
-    async def send_result(self, url: str, payload: Dict[str, Any], task_id: str):
+    async def send_result(self, url: str, payload: dict[str, Any], task_id: str):
         logger.info(f"📤 [Task {task_id}] Sending callback to {url}")
         async with httpx.AsyncClient() as client:
             for attempt in range(3):

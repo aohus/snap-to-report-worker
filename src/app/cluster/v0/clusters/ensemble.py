@@ -13,7 +13,7 @@ from sklearn.preprocessing import normalize
 
 from app.domain.clusterers.base_clusterer import Clusterer
 from app.domain.clusterers.deep_clusterer import DeepClusterer
-from app.models.photometa import PhotoMeta
+from app.cluster.models import PhotoMeta
 
 logger = logging.getLogger(__name__)
 

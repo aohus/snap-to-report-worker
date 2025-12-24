@@ -7,7 +7,7 @@ from typing import Any, Optional, Tuple, Union
 
 import httpx
 import piexif
-from app.models.photometa import PhotoMeta
+from app.cluster.models import PhotoMeta
 
 logger = logging.getLogger(__name__)
 

@@ -4,21 +4,21 @@ import traceback
 from pathlib import Path
 from typing import List
 
-from app.cluster.schema import ClusterRequest, ClusterResponse
-from app.cluster.services.callback_sender import CallbackSender
-from app.cluster.services.pipeline import PhotoClusteringPipeline
-from app.cluster.services.formatters import format_cluster_response
+from common.callback_sender import CallbackSender
+from app.config import JobConfig, ClusteringConfig
 from core.storage.factory import get_storage_client
 from core.storage.local import LocalStorageService
-from app.config import JobConfig, ClusteringConfig
-from app.models.photometa import Photo
+
+from app.cluster.models import Photo
+from app.cluster.schema import ClusterRequest, ClusterResponse
+from app.cluster.services.pipeline import PhotoClusteringPipeline
+from app.cluster.services.formatters import format_cluster_response
 
 logger = logging.getLogger(__name__)
 
 
 class ClusteringService:
     def __init__(self, callback_sender: CallbackSender):
-        # self.pipeline dependency removed
         self.callback_sender = callback_sender
 
     async def process_task(

@@ -14,7 +14,7 @@ from sklearn.cluster import KMeans
 
 # 도메인 의존성 (환경에 맞게 유지)
 from core.storage.factory import get_storage_client
-from app.models.photometa import PhotoMeta
+from app.cluster.models import PhotoMeta
 from app.utils.performance import PerformanceMonitor
 from app.cluster.clusters.base import Clusterer
 from app.cluster.extractors.cosplace import CosPlaceExtractor

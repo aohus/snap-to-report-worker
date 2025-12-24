@@ -13,7 +13,7 @@ from app.cluster.services.metadata_extractor import MetadataExtractor
 #     from core.storage.base import StorageService
 from core.storage.base import StorageService
 from core.storage.local import LocalStorageService
-from app.models.photometa import Photo, PhotoMeta
+from app.cluster.models import Photo, PhotoMeta
 
 logger = logging.getLogger(__name__)
 

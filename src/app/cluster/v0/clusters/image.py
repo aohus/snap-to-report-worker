@@ -6,9 +6,9 @@ from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
-from models.photometa import PhotoMeta
+from app.cluster.models import PhotoMeta
 from config import ClusteringConfig
-from services.clustering.base import (
+from app.cluster.clusters.base import (
     BaseDescriptorExtractor,
     BaseGeometryMatcher,
     Clusterer,

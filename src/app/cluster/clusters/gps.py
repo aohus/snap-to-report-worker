@@ -1,13 +1,12 @@
 import logging
 import math
-from collections import Counter
-from typing import List, Optional, Tuple
+from typing import List, Optional
 
 import numpy as np
 from app.cluster.clusters.base import Clusterer
-from app.models.photometa import PhotoMeta
+from app.cluster.models import PhotoMeta
 from pyproj import Geod
-from sklearn.cluster import DBSCAN, HDBSCAN, OPTICS
+from sklearn.cluster import HDBSCAN, OPTICS
 
 logger = logging.getLogger(__name__)
 

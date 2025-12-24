@@ -9,17 +9,10 @@ from typing import List, Optional
 
 import aiofiles
 import fitz  # PyMuPDF
-from sqlalchemy import select
-from sqlalchemy.orm import selectinload
 
-# --- [Project Dependencies] --- 
 from core.config import configs
-from app.db.database import AsyncSessionLocal
 from core.storage.factory import get_storage_client
-from app.models.cluster import Cluster
-from app.models.job import ExportJob, Job
-from app.models.photo import Photo
-from app.schemas.enum import ExportStatus
+from app.pdf.schema import PDFGenerateRequest
 from app.utils.performance import PerformanceMonitor
 
 logger = logging.getLogger(__name__)
@@ -312,10 +305,11 @@ class PDFGenerator:
         )
 
 
-async def generate_pdf_for_session(export_job_id: str):
+async def generate_pdf_for_session(req: PDFGenerateRequest):
     """
     ExportJob 처리 메인 함수
     """
+    export_job_id = req.export_job_id
     pm = PerformanceMonitor()
     pm.start()
 
@@ -325,7 +319,6 @@ async def generate_pdf_for_session(export_job_id: str):
             select(ExportJob)
             .options(
                 selectinload(ExportJob.job).selectinload(Job.user),
-                selectinload(ExportJob.job).selectinload(Job.photos),
             )
             .where(ExportJob.id == export_job_id)
         )
@@ -347,19 +340,10 @@ async def generate_pdf_for_session(export_job_id: str):
             label_config = export_job.labels or {}
 
             export_info = {
-                "cover_title": export_job.cover_title,
-                "cover_company_name": export_job.cover_company_name,
+                "cover_title": req.cover_title or export_job.cover_title,
+                "cover_company_name": req.cover_company_name or export_job.cover_company_name,
+                "label_config": label_config,
             }
-
-            # Fetch Clusters
-            stmt_c = (
-                select(Cluster)
-                .where(Cluster.job_id == job.id)
-                .where(Cluster.name != "reserve")
-                .order_by(Cluster.order_index.asc())
-            )
-            result_c = await session.execute(stmt_c)
-            clusters_db = result_c.scalars().all()
 
             # --- File Preparation (in Temp Dir) ---
             with tempfile.TemporaryDirectory() as tmpdir_str:
@@ -377,33 +361,28 @@ async def generate_pdf_for_session(export_job_id: str):
 
                 # Download Photos & Build Data Structure
                 processed_clusters = []
-                for cluster in clusters_db:
-                    cluster_data = {"name": cluster.name or f"Cluster #{cluster.id}", "photos": []}
+                for cluster in req.clusters:
+                    cluster_data = {"name": cluster.title or f"Cluster #{cluster.id}", "photos": []}
 
                     # Fetch Top 3 Photos
-                    stmt_p = (
-                        select(Photo)
-                        .where(Photo.cluster_id == cluster.id, Photo.deleted_at.is_(None))
-                        .order_by(Photo.order_index.asc())
-                        .limit(3)
-                    )
-                    res_p = await session.execute(stmt_p)
-                    photos_db = res_p.scalars().all()
+                    target_photos = cluster.photos[:3]
 
-                    for photo in photos_db:
+                    for photo in target_photos:
                         local_path = tmpdir / f"p_{photo.id}_{Path(photo.url).name if photo.url else 'img'}"
 
                         success = False
                         if configs.STORAGE_TYPE in ["gcs", "s3"] and photo.url:
                             success = await _download_file_safe(storage_client, photo.url, local_path)
                         else:
-                            # Local storage fallback
-                            src_path = Path(configs.MEDIA_ROOT) / photo.storage_path
-                            if src_path.exists():
-                                import shutil
+                            # Local storage fallback - try to treat url as path relative to MEDIA_ROOT if strictly needed
+                            # But PDFPhoto model lacks storage_path. Attempt to use url as path if local.
+                            if photo.url:
+                                src_path = Path(configs.MEDIA_ROOT) / photo.url
+                                if src_path.exists():
+                                    import shutil
 
-                                shutil.copy(src_path, local_path)
-                                success = True
+                                    shutil.copy(src_path, local_path)
+                                    success = True
 
                         if success:
                             cluster_data["photos"].append(
@@ -411,7 +390,7 @@ async def generate_pdf_for_session(export_job_id: str):
                                     "local_path": local_path,
                                     "id": str(photo.id),
                                     "db_labels": photo.labels,
-                                    "timestamp": photo.meta_timestamp,
+                                    "timestamp": photo.timestamp,
                                 }
                             )
 

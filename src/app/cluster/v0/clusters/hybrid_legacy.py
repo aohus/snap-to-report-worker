@@ -13,7 +13,7 @@ from sklearn.cluster import KMeans
 
 from app.domain.clusterers.base import Clusterer
 from app.domain.storage.factory import get_storage_client
-from app.models.photometa import PhotoMeta
+from app.cluster.models import PhotoMeta
 
 from ...clusterers.hybrid import PerformanceMonitor
 
