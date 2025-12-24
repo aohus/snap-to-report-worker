@@ -8,8 +8,23 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
+class PDFPhoto(BaseModel):
+    id: str
+    url: str
+    timestamp: str
+    labels: dict
+
+class PDFCluster(BaseModel):
+    id: str
+    title: str
+    photos: list[PDFPhoto]
+
 class PDFGenerateRequest(BaseModel):
     export_job_id: str
+    bucket_path: str
+    cover_title: str
+    cover_company_name: str
+    clusters: list[PDFCluster]
 
 
 @router.post("", status_code=202)

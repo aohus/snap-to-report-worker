@@ -1,14 +1,21 @@
 from typing import List
-from app.cluster.schema import ClusterGroupResponse, ClusterPhoto
+from app.cluster.schema import ClusterGroupResponse, PhotoResponse
 # app.models.photometa 같은 내부 모델 import 가정
 
-def _to_cluster_photo(p) -> ClusterPhoto:
+def _to_cluster_photo(p) -> PhotoResponse:
     """내부 Photo 객체를 응답용 Pydantic 모델로 변환"""
-    return ClusterPhoto(
-        path=p.path,
-        timestamp=p.timestamp,
-        lat=p.lat,
-        lon=p.lon
+    return PhotoResponse(
+        path=getattr(p, 'path', None) or getattr(p, 'storage_path', None), # fallback
+        timestamp=getattr(p, 'timestamp', None) or getattr(p, 'meta_timestamp', None), # fallback handle both Photo and PhotoMeta-like
+        lat=getattr(p, 'lat', None) or getattr(p, 'meta_lat', None),
+        lon=getattr(p, 'lon', None) or getattr(p, 'meta_lon', None),
+        device=getattr(p, 'device', None),
+        focal_length=getattr(p, 'focal_length', None),
+        exposure_time=getattr(p, 'exposure_time', None),
+        iso_speed_rating=getattr(p, 'iso_speed_rating', None),
+        flash=getattr(p, 'flash', None),
+        orientation=getattr(p, 'orientation', None),
+        gps_img_direction=getattr(p, 'gps_img_direction', None)
     )
 
 def format_cluster_response(final_clusters: List[List], noise_id: int = -1) -> List[ClusterGroupResponse]:
@@ -28,12 +35,11 @@ def format_cluster_response(final_clusters: List[List], noise_id: int = -1) -> L
 
     # 2. 유효 클러스터 포매팅
     for idx, cluster in enumerate(valid_clusters):
-        photo_details = [_to_cluster_photo(p) for p in cluster]
+        photos = [_to_cluster_photo(p) for p in cluster]
         formatted_clusters.append(
             ClusterGroupResponse(
                 id=idx,
-                photos=[p.path for p in cluster],
-                photo_details=photo_details,
+                photos=photos,
                 count=len(cluster),
                 avg_similarity=1.0,  # 추후 로직 구현 시 대체
                 quality_score=1.0,
@@ -42,12 +48,11 @@ def format_cluster_response(final_clusters: List[List], noise_id: int = -1) -> L
 
     # 3. 노이즈 그룹 처리
     if noise_photos:
-        noise_details = [_to_cluster_photo(p) for p in noise_photos]
+        noise_photos = [_to_cluster_photo(p) for p in noise_photos]
         formatted_clusters.append(
             ClusterGroupResponse(
                 id=noise_id,
-                photos=[p.path for p in noise_photos],
-                photo_details=noise_details,
+                photos=noise_photos,
                 count=len(noise_photos),
                 avg_similarity=0.0,
                 quality_score=0.0

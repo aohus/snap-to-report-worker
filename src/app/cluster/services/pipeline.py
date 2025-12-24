@@ -5,9 +5,7 @@ from typing import Dict, List
 
 from app.config import JobConfig
 from app.cluster.clusters.base import Clusterer
-from app.cluster.clusters.gps import GPSCluster
-from app.cluster.clusters.hybrid import HybridCluster
-# from app.cluster.clusters.hybrid_legacy import HybridClusterLegacy # Legacy removed
+from app.cluster.clusters.cosplace import CosPlaceCluster 
 from app.cluster.model_loader import get_cos_place_extractor #, get_cos_place_extractor_legacy
 from app.cluster.services.metadata_extractor import MetadataExtractor
 
@@ -59,7 +57,6 @@ class PhotoClusteringPipeline:
 
         self.metadata_extractor = MetadataExtractor()
 
-        # Initialize clusterers
         clusterers = self._create_clusterers(self.config)
         self.clusterer = ClusterRunner(clusterers)
         logger.debug(f"Pipeline initialized with {len(clusterers)} clusterers.")
@@ -68,9 +65,8 @@ class PhotoClusteringPipeline:
         """Factory method to create clustering clusterers based on config."""
         logger.debug("Creating clusterers...")
         
-        # Retrieve the singleton extractor instance
         extractor = get_cos_place_extractor()
-        return [HybridCluster(extractor=extractor)]
+        return [CosPlaceCluster(extractor=extractor)]
 
     async def run(self):
         logger.info(f"Pipeline run started for job {self.config.job_id}.")
@@ -82,7 +78,6 @@ class PhotoClusteringPipeline:
         indices_to_extract = []
 
         for i, p in enumerate(self.photos):
-            # Optimization: Use stored metadata if available
             if p.meta_lat is not None and p.meta_lon is not None:
                 extracted_metas[i] = PhotoMeta(
                     path=p.storage_path,

@@ -27,34 +27,26 @@ class ClusteringService:
         req: ClusterRequest,
         lock: asyncio.Lock
     ):
-        """백그라운드 작업 메인 로직"""
         logger.info(f"🏁 [Task {task_id}] Background processing started. Bucket: {req.bucket_path}")
 
         try:
-            # 1. List files from storage
             storage = get_storage_client()
             files = await storage.list_files(req.bucket_path)
             
             if not files:
                 raise ValueError(f"No files found in bucket path: {req.bucket_path}")
 
-            # 2. Prepare Photos for Pipeline
             photos: List[Photo] = []
             if isinstance(storage, LocalStorageService):
                 for f in files:
-                    # f is relative path from media_root
                     full_path = storage.media_root / f
                     photos.append(Photo(storage_path=str(f), original_filename=Path(f).name))
             else:
                 for f in files:
-                    # f is object key
                     photos.append(Photo(storage_path=f, original_filename=Path(f).name))
 
             logger.info(f"✅ [Task {task_id}] Found {len(photos)} photos.")
 
-            # 3. Configure Pipeline
-            # JobConfig creation
-            # Note: req.cluster_job_id might be None if client doesn't send it, fallback to request_id
             job_id = req.cluster_job_id or req.request_id
             
             clustering_config = ClusteringConfig(
@@ -68,15 +60,11 @@ class ClusteringService:
                 clustering=clustering_config
             )
 
-            # 4. Pipeline Execution (Concurrency Control)
             async with lock:
                 pipeline = PhotoClusteringPipeline(job_config, storage, photos)
                 final_clusters = await pipeline.run()
 
-            # 5. Response Formatting
             response_clusters = format_cluster_response(final_clusters)
-            
-            # 통계 계산
             total_photos = sum(c.count for c in response_clusters)
             
             result_payload = ClusterResponse(
@@ -95,7 +83,6 @@ class ClusteringService:
 
             logger.info(f"✅ [Task {task_id}] Completed. Total clusters: {len(response_clusters)}")
 
-            # 6. Callback
             if req.webhook_url:
                 await self.callback_sender.send_result(str(req.webhook_url), full_payload, task_id)
             else:

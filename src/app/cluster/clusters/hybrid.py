@@ -54,7 +54,6 @@ class HybridCluster(Clusterer):
         self.geod = Geod(ellps="WGS84")
         self.params = PARAMS
 
-        # Clustering Params
         self.gps_eps = self.params.get("eps", 7.48)
         self.visual_split_thresh = self.params.get("loose_thresh", 0.64)
         self.split_min_size = 8
@@ -62,7 +61,6 @@ class HybridCluster(Clusterer):
         self.min_samples = self.params.get("min_samples", 1)
         self.max_cluster_size = self.params.get("max_cluster_size", 4)
 
-        # Initialize Optimized Extractor (use injected or create new)
         self.extractor = extractor if extractor is not None else CosPlaceExtractor(onnx_path="img_models/cosplace_resnet50_int8.onnx")
         self.storage = get_storage_client()
         self.performance_monitor = PerformanceMonitor()
@@ -76,11 +74,9 @@ class HybridCluster(Clusterer):
         logger.info(f"HybridCluster Mode: {'ONNX' if self.extractor.use_onnx else 'Torch/None'}")
         self.performance_monitor.start()
 
-        # 1. Preprocessing (GPS Correction)
         self._adjust_gps_inaccuracy(photos)
         self._correct_outliers_by_speed(photos)
 
-        # 2. Extract Features (Optimized Pipeline)
         logger.info(f"Start feature extraction for {len(photos)} photos.")
         features_matrix = await self._extract_features_optimized(photos)
 

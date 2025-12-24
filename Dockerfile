@@ -21,13 +21,14 @@ COPY pyproject.toml /app/
 # Install dependencies
 RUN poetry install --no-root --without dev
 
-COPY src /app/src
-COPY assets /app/assets
+COPY src /app
+COPY assets/fonts /app/fonts
+COPY assets/img_models /app/img_models
 
 # Create media directory
-RUN mkdir -p /app/media
+RUN mkdir -p /media
 
-ENV PYTHONPATH=/app/src
+ENV PYTHONPATH=/app
 ENV PYTHONUNBUFFERED=1
 
-CMD ["uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]

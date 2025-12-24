@@ -27,23 +27,10 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class PDFLayoutConfig:
-    """A4 레이아웃 및 템플릿 설정값"""
-
-    # Project Root Resolution
-    try:
-        # Docker / Production
-        if Path("/app").exists():
-           PROJECT_ROOT = Path("/app")
-        else:
-           # Local Development (core-engine/src/app/pdf/service.py -> core-engine)
-           PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent.parent
-    except:
-        PROJECT_ROOT = Path(".")
-
     # 폰트
-    FONT_PATH: str = str(PROJECT_ROOT / "fonts/AppleGothic.ttf")
+    FONT_PATH: str = "fonts/AppleGothic.ttf"
     FONT_NAME: str = "AppleGothic"
-    FALLBACK_FONT: str = "kr"  # PyMuPDF built-in Korean font alias
+    FALLBACK_FONT: str = "kr" 
 
     # 템플릿 GCS 경로
     BASE_TEMPLATE_GCS_PATH: str = (
@@ -362,7 +349,6 @@ async def generate_pdf_for_session(export_job_id: str):
             export_info = {
                 "cover_title": export_job.cover_title,
                 "cover_company_name": export_job.cover_company_name,
-                "label_config": label_config,
             }
 
             # Fetch Clusters

@@ -5,6 +5,7 @@ from pydantic_settings import BaseSettings
 class Settings(BaseSettings):
     PROJECT_NAME: str = "Snap Report Core"
     LOG_LEVEL: str = "DEBUG"
+    ENVIRONMENT: str = "development"
     DATABASE_URL: str = "sqlite+aiosqlite:///./test.db"
     
     # Storage

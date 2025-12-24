@@ -10,9 +10,12 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from api.api import api_router
 from core.config import configs
+from core.logger import setup_logging
 from app.cluster.model_loader import initialize_all_models
 
+setup_logging()
 logger = logging.getLogger(__name__)
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):

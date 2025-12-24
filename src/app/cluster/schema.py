@@ -14,17 +14,23 @@ class ClusterRequest(BaseModel):
     similarity_threshold: float = Field(0.3, ge=0.0, le=1.0, description="Similarity threshold")
 
 
-class ClusterPhoto(BaseModel):
+class PhotoResponse(BaseModel):
     path: str
     timestamp: Optional[float] = None
     lat: Optional[float] = None
     lon: Optional[float] = None
+    device: Optional[str] = None
+    focal_length: Optional[float] = None
+    exposure_time: Optional[float] = None
+    iso_speed_rating: Optional[int] = None
+    flash: Optional[int] = None
+    orientation: Optional[int] = None
+    gps_img_direction: Optional[float] = None
 
 
 class ClusterGroupResponse(BaseModel):
     id: int
-    photos: list[str]
-    photo_details: Optional[list[ClusterPhoto]] = None
+    photos: list[PhotoResponse]
     count: Optional[int] = None
     is_noise: Optional[bool] = None
     avg_similarity: float
