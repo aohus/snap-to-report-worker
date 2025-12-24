@@ -3,7 +3,7 @@ from pydantic import BaseModel
 
 class PDFPhoto(BaseModel):
     id: str
-    url: str
+    path: str
     timestamp: str
     labels: dict
 
@@ -13,10 +13,12 @@ class PDFCluster(BaseModel):
     photos: list[PDFPhoto]
 
 class PDFGenerateRequest(BaseModel):
-    export_job_id: str
+    request_id: str
     bucket_path: str
-    cover_title: str
-    cover_company_name: str
+    cover_title: str = ""
+    cover_company_name: str = ""
+    label_config: dict = {}
+    webhook_url: str | None = None
     clusters: list[PDFCluster]
 
 class PDFTaskResponse(BaseModel):

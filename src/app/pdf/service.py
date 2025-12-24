@@ -2,6 +2,7 @@ import asyncio
 import logging
 import os
 import tempfile
+import traceback
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -14,6 +15,7 @@ from core.config import configs
 from core.storage.factory import get_storage_client
 from app.pdf.schema import PDFGenerateRequest
 from app.utils.performance import PerformanceMonitor
+from common.callback_sender import CallbackSender
 
 logger = logging.getLogger(__name__)
 
@@ -60,7 +62,7 @@ class PDFLayoutConfig:
 
     # 사진 캡션 박스
     CAPTION_WIDTH: float = 78
-    CAPTION_HEIGHT: float = 26
+    CAPTION_HEIGHT: float = 30
 
 
 LAYOUT = PDFLayoutConfig()
@@ -245,7 +247,7 @@ class PDFGenerator:
     def _resolve_labels(self, photo_data, export_info, visible_keys, global_overrides):
         """사진별 라벨 데이터 결정"""
         final_labels = {}
-        db_labels = photo_data.get("db_labels") or {}
+        db_labels = photo_data.get("labels") or {}
         photo_timestamp = photo_data.get("timestamp")
 
         for key in visible_keys:
@@ -256,8 +258,24 @@ class PDFGenerator:
                 val = global_overrides[key]
             elif key == "일자" and photo_timestamp:
                 try:
-                    val = photo_timestamp.strftime("%Y.%m.%d")
-                except:
+                    # If it's a string, convert to datetime object first
+                    if isinstance(photo_timestamp, str):
+                        # fromisoformat handles various ISO formats, including with 'T' and timezone.
+                        # Replace 'Z' (Zulu time) with '+00:00' for full fromisoformat compatibility.
+                        if photo_timestamp.endswith('Z'):
+                            photo_timestamp = photo_timestamp[:-1] + '+00:00'
+                        dt_object = datetime.fromisoformat(photo_timestamp)
+                    elif isinstance(photo_timestamp, datetime):
+                        dt_object = photo_timestamp
+                    else:
+                        dt_object = None # Unknown type, will fall back to str(photo_timestamp)
+
+                    if dt_object:
+                        val = dt_object.strftime("%Y.%m.%d")
+                    else:
+                        val = str(photo_timestamp) # Fallback if dt_object is None or parsing failed
+
+                except (ValueError, AttributeError): # Catch parsing errors for str or method not found for other types
                     val = str(photo_timestamp)
             elif key == "시행처":
                 val = export_info.get("cover_company_name") or "-"
@@ -305,44 +323,26 @@ class PDFGenerator:
         )
 
 
-async def generate_pdf_for_session(req: PDFGenerateRequest):
-    """
-    ExportJob 처리 메인 함수
-    """
-    export_job_id = req.export_job_id
-    pm = PerformanceMonitor()
-    pm.start()
+class PDFService:
+    def __init__(self, callback_sender: CallbackSender):
+        self.callback_sender = callback_sender
 
-    async with AsyncSessionLocal() as session:
-        # 1. Fetch Job Data
-        stmt = (
-            select(ExportJob)
-            .options(
-                selectinload(ExportJob.job).selectinload(Job.user),
-            )
-            .where(ExportJob.id == export_job_id)
-        )
-        result = await session.execute(stmt)
-        export_job = result.scalars().first()
-
-        if not export_job:
-            logger.error(f"ExportJob {export_job_id} not found.")
-            return
-
-        export_job.status = ExportStatus.PROCESSING
-        await session.commit()
-
+    async def process_task(
+        self,
+        task_id: str,
+        req: PDFGenerateRequest,
+        lock: asyncio.Lock
+    ):
+        logger.info(f"🏁 [Task {task_id}] Background PDF processing started. Job: {req.request_id}")
+        
         try:
-            job = export_job.job
-            user = job.user
-
-            # Prepare Export Info
-            label_config = export_job.labels or {}
+            pm = PerformanceMonitor()
+            pm.start()
 
             export_info = {
-                "cover_title": req.cover_title or export_job.cover_title,
-                "cover_company_name": req.cover_company_name or export_job.cover_company_name,
-                "label_config": label_config,
+                "cover_title": req.cover_title,
+                "cover_company_name": req.cover_company_name,
+                "label_config": req.label_config or {},
             }
 
             # --- File Preparation (in Temp Dir) ---
@@ -355,11 +355,8 @@ async def generate_pdf_for_session(req: PDFGenerateRequest):
                 cover_template_path = tmpdir / "template_cover.pdf"
 
                 await _download_file_safe(storage_client, LAYOUT.BASE_TEMPLATE_GCS_PATH, base_template_path)
-
-                # 커버 템플릿은 필수가 아닐 수도 있으나, 여기선 시도함
                 await _download_file_safe(storage_client, LAYOUT.COVER_TEMPLATE_GCS_PATH, cover_template_path)
 
-                # Download Photos & Build Data Structure
                 processed_clusters = []
                 for cluster in req.clusters:
                     cluster_data = {"name": cluster.title or f"Cluster #{cluster.id}", "photos": []}
@@ -368,19 +365,16 @@ async def generate_pdf_for_session(req: PDFGenerateRequest):
                     target_photos = cluster.photos[:3]
 
                     for photo in target_photos:
-                        local_path = tmpdir / f"p_{photo.id}_{Path(photo.url).name if photo.url else 'img'}"
+                        local_path = tmpdir / f"{photo.id}_img"
 
                         success = False
-                        if configs.STORAGE_TYPE in ["gcs", "s3"] and photo.url:
-                            success = await _download_file_safe(storage_client, photo.url, local_path)
+                        if configs.STORAGE_TYPE in ["gcs", "s3"] and photo.path:
+                            success = await _download_file_safe(storage_client, photo.path, local_path)
                         else:
-                            # Local storage fallback - try to treat url as path relative to MEDIA_ROOT if strictly needed
-                            # But PDFPhoto model lacks storage_path. Attempt to use url as path if local.
-                            if photo.url:
-                                src_path = Path(configs.MEDIA_ROOT) / photo.url
+                            if photo.path:
+                                src_path = Path(configs.MEDIA_ROOT) / photo.path
                                 if src_path.exists():
                                     import shutil
-
                                     shutil.copy(src_path, local_path)
                                     success = True
 
@@ -408,31 +402,42 @@ async def generate_pdf_for_session(req: PDFGenerateRequest):
                         cover_template_path if cover_template_path.exists() else None,
                     )
 
-                generated_pdf_path = await loop.run_in_executor(None, _run_gen)
+                async with lock:
+                     generated_pdf_path = await loop.run_in_executor(None, _run_gen)
 
                 if not generated_pdf_path:
                     raise Exception("PDF Generation returned None")
 
                 # --- Upload / Save Result ---
-                file_name = f"{job.id}_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
-                final_url = await _save_result_file(storage_client, generated_pdf_path, user.user_id, job.id, file_name)
+                file_name = f"{req.request_id}_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
+                final_url = await _save_result_file(storage_client, generated_pdf_path, req.bucket_path, file_name)
 
-                export_job.status = ExportStatus.EXPORTED
-                export_job.pdf_path = final_url
-                export_job.finished_at = datetime.now()
-                await session.commit()
-
-                logger.info(f"PDF Generated successfully: {final_url}")
+                logger.info(f"✅ [Task {task_id}] PDF Generated successfully: {final_url}")
                 
                 pm.stop()
                 pm.report("GeneratePDF")
+                
+                result_payload = {"pdf_url": final_url}
+                full_payload = {
+                    "task_id": task_id,
+                    "request_id": req.request_id,
+                    "status": "completed",
+                    "result": result_payload
+                }
+
+                if req.webhook_url:
+                    await self.callback_sender.send_result(req.webhook_url, full_payload, task_id)
+                else:
+                    logger.warning(f"⚠️ [Task {task_id}] No webhook_url. Result not sent.")
 
         except Exception as e:
-            logger.exception("PDF Generation Failed")
-            export_job.status = ExportStatus.FAILED
-            export_job.error_message = str(e)
-            export_job.finished_at = datetime.now()
-            await session.commit()
+            logger.error(f"💥 [Task {task_id}] Failed: {e}")
+            logger.error(traceback.format_exc())
+            
+            if req.webhook_url:
+                await self.callback_sender.send_error(
+                    req.webhook_url, str(e), task_id, req.request_id
+                )
 
 
 async def _download_file_safe(client, remote_path, local_path):
@@ -465,9 +470,9 @@ async def _download_file_safe(client, remote_path, local_path):
         return False
 
 
-async def _save_result_file(client, local_path, user_id, job_id, file_name):
+async def _save_result_file(client, local_path, bucket_path, file_name):
     if configs.STORAGE_TYPE in ["gcs", "s3"]:
-        storage_path = f"{user_id}/{job_id}/exports/{file_name}"
+        storage_path = f"{bucket_path}/{file_name}"
         async with aiofiles.open(local_path, "rb") as f:
             await client.save_file(f, storage_path, content_type="application/pdf")
         return client.get_url(storage_path)
