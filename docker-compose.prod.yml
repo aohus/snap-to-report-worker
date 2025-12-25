@@ -1,0 +1,20 @@
+services:
+  worker:
+    image: asia-northeast3-docker.pkg.dev/snap-2-report/snap-2-report-repo/s2p-worker:latest
+    container_name: prod-s2p-worker
+    restart: always
+    ports:
+      - "8000:8000"
+    environment:
+      ENVIRONMENT: production
+      PROJECT_NAME: Snap To Report Worker
+      LOG_LEVEL: INFO
+      DATABASE_URL: sqlite+aiosqlite:////tmp/core.db
+      STORAGE_TYPE: gcs
+      SECRET_KEY: ${SECRET_KEY}
+      ALGORITHM: ${ALGORITHM}
+      ACCESS_TOKEN_EXPIRE_MINUTES: ${ACCESS_TOKEN_EXPIRE_MINUTES}
+      GCS_BUCKET_NAME: ${GCS_BUCKET_NAME}
+      GOOGLE_APPLICATION_CREDENTIALS: /app/gcs-key.json
+    volumes:
+      - ./gcs-key.json:/app/gcs-key.json:ro

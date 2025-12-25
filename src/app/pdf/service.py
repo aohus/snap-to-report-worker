@@ -31,7 +31,9 @@ class PDFLayoutConfig:
     BASE_TEMPLATE_GCS_PATH: str = (
         configs.PDF_BASE_TEMPLATE_PATH if configs.PDF_BASE_TEMPLATE_PATH else "templates/base_template.pdf"
     )
-    COVER_TEMPLATE_GCS_PATH: str = "templates/cover_template.pdf"
+    COVER_TEMPLATE_GCS_PATH: str = (
+        configs.PDF_COVER_TEMPLATE_PATH if configs.PDF_COVER_TEMPLATE_PATH else "templates/cover_template.pdf"
+    )
 
     # 레이아웃 치수 (pt 단위)
     PAGE_WIDTH: float = 595
