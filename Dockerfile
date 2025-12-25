@@ -25,9 +25,6 @@ COPY src /app
 COPY assets/fonts /app/fonts
 COPY assets/img_models /app/img_models
 
-# Create media directory
-RUN mkdir -p /media
-
 ENV PYTHONPATH=/app
 ENV PYTHONUNBUFFERED=1
 

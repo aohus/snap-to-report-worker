@@ -55,8 +55,6 @@ jobs:
             cd snap-to-report-worker
 
             cat <<EOF > .env
-            SECRET_KEY=${{ secrets.SECRET_KEY }}
-            ALGORITHM=${{ secrets.ALGORITHM }}
             ACCESS_TOKEN_EXPIRE_MINUTES=${{ secrets.ACCESS_TOKEN_EXPIRE_MINUTES }}
             GCS_BUCKET_NAME=${{ secrets.GCS_BUCKET_NAME }}
             ALLOWED_ORIGINS="*"

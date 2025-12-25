@@ -9,8 +9,8 @@ class Settings(BaseSettings):
     DATABASE_URL: str = "sqlite+aiosqlite:///./test.db"
     
     # Storage
-    STORAGE_TYPE: str = "gcs" # local, gcs, s3
-    GCS_BUCKET_NAME: str = "snap-2-report-assets-1764756531"
+    STORAGE_TYPE: str = "gcs"
+    GCS_BUCKET_NAME: str = "bucket"
     
     # PDF
     PDF_BASE_TEMPLATE_PATH: str = "templates/base_template.pdf"

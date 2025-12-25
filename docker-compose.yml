@@ -11,14 +11,14 @@ services:
       - LOG_LEVEL=DEBUG
       - DATABASE_URL=sqlite+aiosqlite:////tmp/core.db
       - STORAGE_TYPE=gcs
-      - MEDIA_ROOT=/app/media
       # Core Engine internal media URL (for downloads from itself if needed)
-      - MEDIA_URL=http://localhost:8001/media
+      # - MEDIA_ROOT=/app/media
+      # - MEDIA_URL=http://localhost:8001/media
       - CALLBACK_BASE_URL=http://host.docker.internal:8000/api
       - GCS_BUCKET_NAME=${GCS_BUCKET_NAME:-snap-2-report-assets-1764756531}
       - GOOGLE_APPLICATION_CREDENTIALS=/cred_gcs.json
     volumes:
-      - ./media:/app/media
       - ./src/config/gcp/.cred_gcs.json:/cred_gcs.json
+      # - ./media:/app/media
     extra_hosts:
       - "host.docker.internal:host-gateway"

@@ -11,9 +11,6 @@ services:
       LOG_LEVEL: INFO
       DATABASE_URL: sqlite+aiosqlite:////tmp/core.db
       STORAGE_TYPE: gcs
-      SECRET_KEY: ${SECRET_KEY}
-      ALGORITHM: ${ALGORITHM}
-      ACCESS_TOKEN_EXPIRE_MINUTES: ${ACCESS_TOKEN_EXPIRE_MINUTES}
       GCS_BUCKET_NAME: ${GCS_BUCKET_NAME}
       GOOGLE_APPLICATION_CREDENTIALS: /app/gcs-key.json
     volumes:
